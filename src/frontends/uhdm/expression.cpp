@@ -17782,7 +17782,7 @@ RTLIL::SigSpec UhdmImporter::import_xmr_read(const hier_path* uhdm_hier) {
         }
         size_t first = 0;
         if (all_ref && names.size() >= 3 && module &&
-            RTLIL::escape_id(names[0]) == module->name && !module->cell(RTLIL::escape_id(names[0])))
+            RTLIL::escape_id(names[0]) == module->name.str() && !module->cell(RTLIL::escape_id(names[0])))
             first = 1;
         if (all_ref && names.size() - first >= 2) {
             std::string inst = names[first];
@@ -17858,7 +17858,7 @@ RTLIL::SigSpec UhdmImporter::import_hier_path(const hier_path* uhdm_hier, const 
         const any* e0 = (*uhdm_hier->Path_elems())[0];
         bool absolute = uhdm_hier->Path_elems()->size() >= 3 &&
             e0->UhdmType() == uhdmref_obj &&
-            RTLIL::escape_id(std::string(e0->VpiName())) == module->name &&
+            RTLIL::escape_id(std::string(e0->VpiName())) == module->name.str() &&
             !module->wire(module->name) && !module->cell(module->name);
         bool truncated_into_child = false;
         if (!absolute && e0->UhdmType() == uhdmref_obj) {
