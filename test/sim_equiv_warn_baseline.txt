@@ -156,7 +156,6 @@ func_local_accumulator_in_ff
 lrm_array_reduction_with
 lrm_for_multi_init_step
 lrm_generic_iface_port
-lrm_implication_equiv
 lrm_operators_unsigned
 # ref arguments of an automatic task (13.5.2): the writes through p and q are
 # lost (x = a, y = b); read_slang loses them the same way, Verilator is right.
