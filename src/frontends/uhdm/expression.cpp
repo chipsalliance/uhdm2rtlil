@@ -9029,6 +9029,48 @@ RTLIL::SigSpec UhdmImporter::import_operation(const operation* uhdm_op, const UH
     }
 
     if (op_type == vpiAssignmentPatternOp) {
+        // An assignment pattern as the TARGET of an assignment from an
+        // unpacked ARRAY, `'{p, q} = arr;` (IEEE 1800-2023 10.8): the i-th
+        // lvalue receives the i-th element in left-to-right order.  The flat
+        // array keeps its lowest index at the LSB, so a packed concatenation
+        // of the lvalues (the generic path below) would hand p the LAST
+        // element.  Place each lvalue at its element's native slot instead.
+        // (An unpacked STRUCT target needs nothing: its flat layout has the
+        // first member at the MSB, as a concatenation does.)
+        if (uhdm_op->Operands() && uhdm_op->VpiParent()) {
+            const UHDM::any* par = uhdm_op->VpiParent();
+            const UHDM::any* plhs = nullptr;
+            const UHDM::any* prhs = nullptr;
+            if (par->UhdmType() == uhdmassignment) {
+                plhs = any_cast<const UHDM::assignment*>(par)->Lhs();
+                prhs = any_cast<const UHDM::assignment*>(par)->Rhs();
+            } else if (par->UhdmType() == uhdmcont_assign) {
+                plhs = any_cast<const UHDM::cont_assign*>(par)->Lhs();
+                prhs = any_cast<const UHDM::cont_assign*>(par)->Rhs();
+            }
+            int an = 0, aew = 0;
+            bool aasc = false;
+            if (plhs == uhdm_op && prhs && prhs->UhdmType() == uhdmref_obj &&
+                unpacked_decl_geometry(any_cast<const UHDM::ref_obj*>(prhs)->Actual_group(),
+                                       an, aew, aasc) &&
+                (size_t)an == uhdm_op->Operands()->size()) {
+                std::vector<RTLIL::SigSpec> lvs;
+                for (auto o : *uhdm_op->Operands()) {
+                    RTLIL::SigSpec v = import_expression(any_cast<const UHDM::expr*>(o), input_mapping);
+                    if (v.size() != aew) { lvs.clear(); break; }
+                    lvs.push_back(v);
+                }
+                if ((int)lvs.size() == an) {
+                    RTLIL::SigSpec result;
+                    // native slot k (from the LSB) is element lo+k; in
+                    // left-to-right order that is position k (ascending) or
+                    // n-1-k (descending).
+                    for (int k = 0; k < an; k++)
+                        result.append(lvs[aasc ? k : an - 1 - k]);
+                    return result;
+                }
+            }
+        }
         // `'{default: V}` — a tagged_pattern whose tag typespec is named
         // "default" fills EVERY member of the target struct/union with V
         // (UnionParameter: `flimish_giant LovingHome = '{default: 1}`).  The
