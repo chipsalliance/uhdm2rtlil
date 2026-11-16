@@ -166,8 +166,6 @@ lrm_tristate_gates
 lrm_type_operator
 # $unit scope (3.12.1/26.5): $unit::unit_mix(a + $unit::UNIT_K) diverges.
 lrm_unit_scope
-# unpacked array concatenation (10.10) with an array and a slice as items.
-lrm_unpacked_array_concat
 # indexed part-select of an unpacked array arr[i +: 2] / arr[j -: 2] (7.4.6):
 # read_uhdm gives p=1 q=0 r=0 s=0 for a..d = 1..4, i = 2; read_slang and the
 # LRM give 1 2 3 4.

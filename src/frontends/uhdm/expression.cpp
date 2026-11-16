@@ -8731,7 +8731,12 @@ bool UhdmImporter::unpacked_array_concat_geometry(const UHDM::operation* op, int
     else if (parent->UhdmType() == uhdmcont_assign)
         lhs = any_cast<const UHDM::cont_assign*>(parent)->Lhs();
     if (!lhs || lhs->UhdmType() != uhdmref_obj) return false;
-    const UHDM::any* decl = any_cast<const UHDM::ref_obj*>(lhs)->Actual_group();
+    return unpacked_decl_geometry(any_cast<const UHDM::ref_obj*>(lhs)->Actual_group(), n, ew, asc);
+}
+
+// (element count, element width, ascending) of a one-dimensional unpacked
+// array declaration.
+bool UhdmImporter::unpacked_decl_geometry(const UHDM::any* decl, int& n, int& ew, bool& asc) {
     if (!decl) return false;
     const UHDM::VectorOfrange* ranges = nullptr;
     const UHDM::typespec* elem_ts = nullptr;
@@ -10272,7 +10277,7 @@ RTLIL::SigSpec UhdmImporter::import_operation(const operation* uhdm_op, const UH
     if (op_type == vpiConcatOp && !uhdm_op->VpiReordered() && uhdm_op->Operands())
         has_unpacked_array_concat_target =
             unpacked_array_concat_geometry(uhdm_op, uac_n, uac_ew, uac_asc) &&
-            (size_t)uac_n == uhdm_op->Operands()->size();
+            (size_t)uac_n >= uhdm_op->Operands()->size();
 
     // A conditional whose SELECTED arm is a runtime signal must not be
     // folded either.  `(EnMask) ? req_wmask_i[i] : {SramDw{1'b1}}` inside a
@@ -10692,6 +10697,57 @@ RTLIL::SigSpec UhdmImporter::import_operation(const operation* uhdm_op, const UH
             for (int i = uac_n - 1; i >= 0; i--) result.append(fit(operands[i]));
         log_debug("UHDM: unpacked-array concat: %d elements x %d bits\n", uac_n, uac_ew);
         return result;
+    }
+    // Fewer items than elements: some items are themselves unpacked arrays
+    // or slices (`rot = {two, arr[0:1]}`, LRM 10.10), each contributing its
+    // elements in left-to-right order.  An array-valued operand arrives as
+    // its flat wire, lowest index at the LSB, so a left-to-right walk takes
+    // its chunks from the LSB for an ascending range and from the MSB for a
+    // descending one.  Treated as a packed concat, every multi-element item
+    // landed on the elements of the item at the mirrored position.
+    if (has_unpacked_array_concat_target && (size_t)uac_n > operands.size() &&
+        uhdm_op->Operands() && uhdm_op->Operands()->size() == operands.size()) {
+        std::vector<RTLIL::SigSpec> elems;   // left-to-right
+        bool ok = true;
+        for (size_t i = 0; i < operands.size() && ok; i++) {
+            const RTLIL::SigSpec& v = operands[i];
+            if (v.size() % uac_ew != 0 || v.size() == 0) { ok = false; break; }
+            int k = v.size() / uac_ew;
+            if (k == 1) { elems.push_back(v); continue; }
+            const UHDM::any* o = (*uhdm_op->Operands())[i];
+            bool oasc = false;
+            int on = 0, oew = 0;
+            if (o->UhdmType() == uhdmpart_select) {
+                auto ps = any_cast<const UHDM::part_select*>(o);
+                bool sf = force_const_fold;
+                force_const_fold = true;
+                RTLIL::SigSpec l = ps->Left_range() ? import_expression(ps->Left_range()) : RTLIL::SigSpec();
+                RTLIL::SigSpec r = ps->Right_range() ? import_expression(ps->Right_range()) : RTLIL::SigSpec();
+                force_const_fold = sf;
+                if (!l.is_fully_const() || !r.is_fully_const()) { ok = false; break; }
+                oasc = l.as_int() < r.as_int();
+            } else if (o->UhdmType() == uhdmref_obj &&
+                       unpacked_decl_geometry(any_cast<const UHDM::ref_obj*>(o)->Actual_group(), on, oew, oasc) &&
+                       on == k && oew == uac_ew) {
+                // direction from the declaration
+            } else {
+                ok = false;
+                break;
+            }
+            for (int j = 0; j < k; j++) {
+                int c = oasc ? j : k - 1 - j;
+                elems.push_back(v.extract(c * uac_ew, uac_ew));
+            }
+        }
+        if (ok && (int)elems.size() == uac_n) {
+            RTLIL::SigSpec result;
+            if (uac_asc)
+                for (int i = 0; i < uac_n; i++) result.append(elems[i]);
+            else
+                for (int i = uac_n - 1; i >= 0; i--) result.append(elems[i]);
+            log_debug("UHDM: unpacked-array concat with array items: %d elements x %d bits\n", uac_n, uac_ew);
+            return result;
+        }
     }
 
     if (all_const && operands.size() > 0 &&

@@ -162,4 +162,3 @@ lrm_ref_argument
 lrm_tristate_gates
 lrm_type_operator
 lrm_unit_scope
-lrm_unpacked_array_concat
