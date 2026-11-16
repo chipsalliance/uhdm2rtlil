@@ -8800,6 +8800,17 @@ bool UhdmImporter::try_eval_real(const UHDM::any* e, double& out, bool& saw_real
                 return true;
             }
             if (c->VpiSize() == -1) return false;  // a fill literal has no value here
+            // `8'd50` arrives as `DEC:50` (vpiDecConst), a spelling
+            // extract_const_from_value does not read.
+            if (v.rfind("DEC:", 0) == 0) {
+                std::string d = v.substr(4);
+                d.erase(std::remove(d.begin(), d.end(), '_'), d.end());
+                if (d.empty() || d.size() > 19 ||
+                    d.find_first_not_of("0123456789") != std::string::npos)
+                    return false;
+                out = (double)std::stoull(d);
+                return true;
+            }
             RTLIL::Const k = extract_const_from_value(v);
             if (k.size() == 0 || !k.is_fully_def()) return false;
             // sized literals are unsigned, `INT:` and `'s` ones signed
@@ -9950,8 +9961,34 @@ RTLIL::SigSpec UhdmImporter::import_operation(const operation* uhdm_op, const UH
             auto lop = dynamic_cast<const UHDM::operation*>(ops[i]);
             if (lop && lop->VpiOpType() == vpiListOp && lop->Operands() &&
                 lop->Operands()->size() == 2) {
-                RTLIL::SigSpec lo = import_expression(any_cast<const UHDM::expr*>((*lop->Operands())[0]), input_mapping);
-                RTLIL::SigSpec hi = import_expression(any_cast<const UHDM::expr*>((*lop->Operands())[1]), input_mapping);
+                // A REAL-valued constant bound -- the relative tolerance range
+                // `[A +%- B]` of IEEE 1800-2023 11.4.13 arrives as
+                // `[A - A*B/100.0 : A + A*B/100.0]` -- is folded in double
+                // precision.  The integral value compared against it is
+                // inside when x >= lo and x <= hi as REALS, i.e. x >= ceil(lo)
+                // and x <= floor(hi); rounding either bound to the nearest
+                // integer would admit or drop a value at a fractional edge.
+                auto real_bound = [&](const UHDM::any* b, bool lower, RTLIL::SigSpec& out) {
+                    double d = 0;
+                    bool saw_real = false;
+                    if (!try_eval_real(b, d, saw_real) || !saw_real || !std::isfinite(d))
+                        return false;
+                    double r = lower ? std::ceil(d) : std::floor(d);
+                    if (!sg && r < 0) r = lower ? 0 : -1;   // unsigned x: clamp / empty
+                    out = RTLIL::Const((long long)r, 64);
+                    return true;
+                };
+                RTLIL::SigSpec lo, hi;
+                bool lo_real = real_bound((*lop->Operands())[0], true, lo);
+                bool hi_real = real_bound((*lop->Operands())[1], false, hi);
+                if (!lo_real)
+                    lo = import_expression(any_cast<const UHDM::expr*>((*lop->Operands())[0]), input_mapping);
+                if (!hi_real)
+                    hi = import_expression(any_cast<const UHDM::expr*>((*lop->Operands())[1]), input_mapping);
+                if (hi_real && !sg && hi.as_const().as_int(true) < 0) {
+                    result = result.empty() ? RTLIL::SigSpec(RTLIL::State::S0) : result;
+                    continue;
+                }
                 int w = std::max({lhs.size(), lo.size(), hi.size()});
                 RTLIL::SigSpec lx = lhs, lox = lo, hix = hi;
                 if (lx.size() < w) lx.extend_u0(w, sg);
