@@ -158,9 +158,6 @@ lrm_header_port_expr
 # bufif1/notif0/notif1 and a pullup on a shared net (28.6, 28.10): the
 # undriven net reads 0 instead of the pullup's 1, and notif outputs are wrong.
 lrm_tristate_gates
-# Surelog UH0700 on type(expr) (6.23): the declared variable, the cast
-# through `localparam type ST = type(s)` and the generate condition are lost.
-lrm_type_operator
 # $unit scope (3.12.1/26.5): $unit::unit_mix(a + $unit::UNIT_K) diverges.
 lrm_unit_scope
 # indexed part-select of an unpacked array arr[i +: 2] / arr[j -: 2] (7.4.6):
